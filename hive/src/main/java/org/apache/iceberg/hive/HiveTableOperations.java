@@ -19,6 +19,8 @@
 
 package org.apache.iceberg.hive;
 
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.Collections;
@@ -28,6 +30,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Collectors;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hive.common.StatsSetupConst;
@@ -69,6 +73,10 @@ public class HiveTableOperations extends BaseMetastoreTableOperations {
   private static final Logger LOG = LoggerFactory.getLogger(HiveTableOperations.class);
 
   private static final String HIVE_ACQUIRE_LOCK_STATE_TIMEOUT_MS = "iceberg.hive.lock-timeout-ms";
+
+  private static final String HIVE_TABLE_LEVEL_LOCK_EVICT_MS = "iceberg.hive.table-level-lock-evict-ms";
+  private static final long HIVE_TABLE_LEVEL_LOCK_EVICT_MS_DEFAULT = TimeUnit.MINUTES.toMillis(10);
+
   private static final long HIVE_ACQUIRE_LOCK_STATE_TIMEOUT_MS_DEFAULT = 3 * 60 * 1000; // 3 minutes
   private static final DynMethods.UnboundMethod ALTER_TABLE = DynMethods.builder("alter_table")
       .impl(HiveMetaStoreClient.class, "alter_table_with_environmentContext",
@@ -77,6 +85,16 @@ public class HiveTableOperations extends BaseMetastoreTableOperations {
           String.class, String.class, Table.class, EnvironmentContext.class)
       .build();
 
+  // commit lock 缓存，自动过期
+  private static Cache<String, ReentrantLock> commitLockCache;
+
+  private static synchronized void initTableLevelLockCache(long evictionTimeout) {
+    if (commitLockCache == null) {
+      commitLockCache = Caffeine.newBuilder()
+              .expireAfterAccess(evictionTimeout, TimeUnit.MILLISECONDS)
+              .build();
+    }
+  }
   private final HiveClientPool metaClients;
   private final String fullName;
   private final String database;
@@ -95,6 +113,9 @@ public class HiveTableOperations extends BaseMetastoreTableOperations {
     this.tableName = table;
     this.lockAcquireTimeout =
         conf.getLong(HIVE_ACQUIRE_LOCK_STATE_TIMEOUT_MS, HIVE_ACQUIRE_LOCK_STATE_TIMEOUT_MS_DEFAULT);
+    long tableLevelLockCacheEvictionTimeout =
+            conf.getLong(HIVE_TABLE_LEVEL_LOCK_EVICT_MS, HIVE_TABLE_LEVEL_LOCK_EVICT_MS_DEFAULT);
+    initTableLevelLockCache(tableLevelLockCacheEvictionTimeout);
   }
 
   @Override
@@ -138,6 +159,10 @@ public class HiveTableOperations extends BaseMetastoreTableOperations {
 
     boolean threw = true;
     Optional<Long> lockId = Optional.empty();
+
+    // 获取commit lock
+    ReentrantLock tableLevelMutex = commitLockCache.get(fullName, t -> new ReentrantLock(true));
+    tableLevelMutex.lock();
     try {
       lockId = Optional.of(acquireLock());
       // TODO add lock heart beating for cases where default lock timeout is too low.
@@ -160,7 +185,6 @@ public class HiveTableOperations extends BaseMetastoreTableOperations {
             TableType.EXTERNAL_TABLE.toString());
         tbl.getParameters().put("EXTERNAL", "TRUE"); // using the external table type also requires this
       }
-
       tbl.setSd(storageDescriptor(metadata)); // set to pickup any schema changes
       String metadataLocation = tbl.getParameters().get(METADATA_LOCATION_PROP);
       String baseMetadataLocation = base != null ? base.metadataFileLocation() : null;
@@ -204,11 +228,9 @@ public class HiveTableOperations extends BaseMetastoreTableOperations {
       throw new RuntimeException("Interrupted during commit", e);
 
     } finally {
-      if (threw) {
-        // if anything went wrong, clean up the uncommitted metadata file
-        io().deleteFile(newMetadataLocation);
-      }
-      unlock(lockId);
+      cleanupMetadataAndUnlock(threw, newMetadataLocation, lockId);
+      // 释放本地锁
+      tableLevelMutex.unlock();
     }
   }
 
@@ -261,16 +283,25 @@ public class HiveTableOperations extends BaseMetastoreTableOperations {
     final long start = System.currentTimeMillis();
     long duration = 0;
     boolean timeout = false;
-    while (!timeout && state.equals(LockState.WAITING)) {
-      lockResponse = metaClients.run(client -> client.checkLock(lockId));
-      state = lockResponse.getState();
+    try {
+      while (!timeout && state.equals(LockState.WAITING)) {
+        lockResponse = metaClients.run(client -> client.checkLock(lockId));
+        state = lockResponse.getState();
 
-      // check timeout
-      duration = System.currentTimeMillis() - start;
-      if (duration > lockAcquireTimeout) {
-        timeout = true;
-      } else {
-        Thread.sleep(50);
+        // check timeout
+        duration = System.currentTimeMillis() - start;
+        if (duration > lockAcquireTimeout) {
+          timeout = true;
+        } else {
+          Thread.sleep(50);
+        }
+      }
+    } catch (Exception e) {
+      LOG.warn("Fail to acquire the lock on {}.{}", database, tableName, e);
+    } finally {
+      // 获取不到锁时，需要释放锁，否则会一直堆积
+      if (!state.equals(LockState.ACQUIRED)) {
+        unlock(Optional.of(lockId));
       }
     }
 
@@ -284,7 +315,22 @@ public class HiveTableOperations extends BaseMetastoreTableOperations {
       throw new CommitFailedException(String.format("Could not acquire the lock on %s.%s, " +
           "lock request ended in state %s", database, tableName, state));
     }
+
     return lockId;
+  }
+
+  private void cleanupMetadataAndUnlock(boolean errorThrown, String metadataLocation, Optional<Long> lockId) {
+    try {
+      if (errorThrown) {
+        // if anything went wrong, clean up the uncommitted metadata file
+        io().deleteFile(metadataLocation);
+      }
+    } catch (RuntimeException e) {
+      LOG.error("Fail to cleanup metadata file at {}", metadataLocation, e);
+      throw e;
+    } finally {
+      unlock(lockId);
+    }
   }
 
   private void unlock(Optional<Long> lockId) {
