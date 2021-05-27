@@ -55,6 +55,7 @@ import org.apache.iceberg.TableMetadata;
 import org.apache.iceberg.common.DynMethods;
 import org.apache.iceberg.exceptions.AlreadyExistsException;
 import org.apache.iceberg.exceptions.CommitFailedException;
+import org.apache.iceberg.exceptions.CommitStateUnknownException;
 import org.apache.iceberg.exceptions.NoSuchIcebergTableException;
 import org.apache.iceberg.exceptions.NoSuchTableException;
 import org.apache.iceberg.hadoop.HadoopFileIO;
@@ -157,7 +158,7 @@ public class HiveTableOperations extends BaseMetastoreTableOperations {
   protected void doCommit(TableMetadata base, TableMetadata metadata) {
     String newMetadataLocation = writeNewMetadata(metadata, currentVersion() + 1);
 
-    boolean threw = true;
+    CommitStatus commitStatus = CommitStatus.FAILURE;
     Optional<Long> lockId = Optional.empty();
 
     // 获取commit lock
@@ -195,22 +196,36 @@ public class HiveTableOperations extends BaseMetastoreTableOperations {
       }
 
       setParameters(newMetadataLocation, tbl);
-
-      if (base != null) {
-        metaClients.run(client -> {
-          EnvironmentContext envContext = new EnvironmentContext(
-              ImmutableMap.of(StatsSetupConst.DO_NOT_UPDATE_STATS, StatsSetupConst.TRUE)
-          );
-          ALTER_TABLE.invoke(client, database, tableName, tbl, envContext);
-          return null;
-        });
-      } else {
-        metaClients.run(client -> {
-          client.createTable(tbl);
-          return null;
-        });
+      try {
+        if (base != null) {
+          metaClients.run(client -> {
+            EnvironmentContext envContext = new EnvironmentContext(
+                    ImmutableMap.of(StatsSetupConst.DO_NOT_UPDATE_STATS, StatsSetupConst.TRUE)
+            );
+            ALTER_TABLE.invoke(client, database, tableName, tbl, envContext);
+            return null;
+          });
+        } else {
+          metaClients.run(client -> {
+            client.createTable(tbl);
+            return null;
+          });
+        }
+        commitStatus = CommitStatus.SUCCESS;
+      } catch (Throwable persistFailure) {
+        LOG.error("Cannot tell if commit to {}.{} succeeded, attempting to reconnect and check.",
+                database, tableName, persistFailure);
+        commitStatus = checkCommitStatus(newMetadataLocation, metadata);
+        switch (commitStatus) {
+          case SUCCESS:
+            break;
+          case FAILURE:
+            throw persistFailure;
+          case UNKNOWN:
+            throw new CommitStateUnknownException(persistFailure);
+        }
       }
-      threw = false;
+
     } catch (org.apache.hadoop.hive.metastore.api.AlreadyExistsException e) {
       throw new AlreadyExistsException("Table already exists: %s.%s", database, tableName);
 
@@ -228,7 +243,7 @@ public class HiveTableOperations extends BaseMetastoreTableOperations {
       throw new RuntimeException("Interrupted during commit", e);
 
     } finally {
-      cleanupMetadataAndUnlock(threw, newMetadataLocation, lockId);
+      cleanupMetadataAndUnlock(commitStatus, newMetadataLocation, lockId);
       // 释放本地锁
       tableLevelMutex.unlock();
     }
@@ -319,9 +334,9 @@ public class HiveTableOperations extends BaseMetastoreTableOperations {
     return lockId;
   }
 
-  private void cleanupMetadataAndUnlock(boolean errorThrown, String metadataLocation, Optional<Long> lockId) {
+  void cleanupMetadataAndUnlock(CommitStatus commitStatus, String metadataLocation, Optional<Long> lockId) {
     try {
-      if (errorThrown) {
+      if (commitStatus == CommitStatus.FAILURE) {
         // if anything went wrong, clean up the uncommitted metadata file
         io().deleteFile(metadataLocation);
       }
@@ -357,5 +372,9 @@ public class HiveTableOperations extends BaseMetastoreTableOperations {
         "Not an iceberg table: %s (type=%s)", fullName, tableType);
     NoSuchIcebergTableException.check(table.getParameters().get(METADATA_LOCATION_PROP) != null,
         "Not an iceberg table: %s missing %s", fullName, METADATA_LOCATION_PROP);
+  }
+
+  protected String tableName() {
+    return fullName;
   }
 }

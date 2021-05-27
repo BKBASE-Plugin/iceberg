@@ -32,9 +32,19 @@ import org.apache.iceberg.io.OutputFile;
 import org.apache.iceberg.relocated.com.google.common.base.Objects;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.Sets;
+import org.apache.iceberg.util.PropertyUtil;
 import org.apache.iceberg.util.Tasks;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import static org.apache.iceberg.TableProperties.COMMIT_NUM_STATUS_CHECKS;
+import static org.apache.iceberg.TableProperties.COMMIT_NUM_STATUS_CHECKS_DEFAULT;
+import static org.apache.iceberg.TableProperties.COMMIT_STATUS_CHECKS_MAX_WAIT_MS;
+import static org.apache.iceberg.TableProperties.COMMIT_STATUS_CHECKS_MAX_WAIT_MS_DEFAULT;
+import static org.apache.iceberg.TableProperties.COMMIT_STATUS_CHECKS_MIN_WAIT_MS;
+import static org.apache.iceberg.TableProperties.COMMIT_STATUS_CHECKS_MIN_WAIT_MS_DEFAULT;
+import static org.apache.iceberg.TableProperties.COMMIT_STATUS_CHECKS_TOTAL_WAIT_MS;
+import static org.apache.iceberg.TableProperties.COMMIT_STATUS_CHECKS_TOTAL_WAIT_MS_DEFAULT;
 
 public abstract class BaseMetastoreTableOperations implements TableOperations {
   private static final Logger LOG = LoggerFactory.getLogger(BaseMetastoreTableOperations.class);
@@ -270,4 +280,67 @@ public abstract class BaseMetastoreTableOperations implements TableOperations {
           .run(previousMetadataFile -> io().deleteFile(previousMetadataFile.file()));
     }
   }
+
+  protected enum CommitStatus {
+    FAILURE,
+    SUCCESS,
+    UNKNOWN
+  }
+
+  /**
+   * Attempt to load the table and see if any current or past metadata location matches the one we were attempting
+   * to set. This is used as a last resort when we are dealing with exceptions that may indicate the commit has
+   * failed but are not proof that this is the case. Past locations must also be searched on the chance that a second
+   * committer was able to successfully commit on top of our commit.
+   *
+   * @param newMetadataLocation the path of the new commit file
+   * @param config metadata to use for configuration
+   * @return Commit Status of Success, Failure or Unknown
+   */
+  protected CommitStatus checkCommitStatus(String newMetadataLocation, TableMetadata config) {
+    int maxAttempts = PropertyUtil.propertyAsInt(config.properties(), COMMIT_NUM_STATUS_CHECKS,
+            COMMIT_NUM_STATUS_CHECKS_DEFAULT);
+    long minWaitMs = PropertyUtil.propertyAsLong(config.properties(), COMMIT_STATUS_CHECKS_MIN_WAIT_MS,
+            COMMIT_STATUS_CHECKS_MIN_WAIT_MS_DEFAULT);
+    long maxWaitMs = PropertyUtil.propertyAsLong(config.properties(), COMMIT_STATUS_CHECKS_MAX_WAIT_MS,
+            COMMIT_STATUS_CHECKS_MAX_WAIT_MS_DEFAULT);
+    long totalRetryMs = PropertyUtil.propertyAsLong(config.properties(), COMMIT_STATUS_CHECKS_TOTAL_WAIT_MS,
+            COMMIT_STATUS_CHECKS_TOTAL_WAIT_MS_DEFAULT);
+
+    AtomicReference<CommitStatus> status = new AtomicReference<>(CommitStatus.UNKNOWN);
+
+    Tasks.foreach(newMetadataLocation)
+            .retry(maxAttempts)
+            .suppressFailureWhenFinished()
+            .exponentialBackoff(minWaitMs, maxWaitMs, totalRetryMs, 2.0)
+            .onFailure((location, checkException) ->
+                    LOG.error("Cannot check if commit to {} exists.", tableName(), checkException))
+            .run(location -> {
+              TableMetadata metadata = refresh();
+              String currentMetadataFileLocation = metadata.metadataFileLocation();
+              boolean commitSuccess = currentMetadataFileLocation.equals(newMetadataLocation) ||
+                      metadata.previousFiles().stream().anyMatch(log -> log.file().equals(newMetadataLocation));
+              if (commitSuccess) {
+                LOG.info("Commit status check: Commit to {} of {} succeeded", tableName(), newMetadataLocation);
+                status.set(CommitStatus.SUCCESS);
+              } else {
+                LOG.info("Commit status check: Commit to {} of {} failed", tableName(), newMetadataLocation);
+                status.set(CommitStatus.FAILURE);
+              }
+            });
+
+    if (status.get() == CommitStatus.UNKNOWN) {
+      LOG.error("Cannot determine commit state to {}. Failed during checking {} times. " +
+              "Treating commit state as unknown.", tableName(), maxAttempts);
+    }
+
+    return status.get();
+  }
+
+  /**
+   * The full name of the table used for logging purposes only. For example for HiveTableOperations it is
+   * catalogName + "." + database + "." + table.
+   * @return The full name
+   */
+  protected abstract String tableName();
 }
