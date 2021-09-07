@@ -36,6 +36,7 @@ import org.apache.iceberg.expressions.Literal;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.iceberg.relocated.com.google.common.collect.Sets;
+import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.Types.StructType;
 import org.apache.parquet.column.ColumnDescriptor;
 import org.apache.parquet.column.Dictionary;
@@ -47,6 +48,7 @@ import org.apache.parquet.schema.MessageType;
 import org.apache.parquet.schema.PrimitiveType;
 
 public class ParquetDictionaryRowGroupFilter {
+  private final Schema schema;
   private final Expression expr;
 
   public ParquetDictionaryRowGroupFilter(Schema schema, Expression unbound) {
@@ -54,6 +56,7 @@ public class ParquetDictionaryRowGroupFilter {
   }
 
   public ParquetDictionaryRowGroupFilter(Schema schema, Expression unbound, boolean caseSensitive) {
+    this.schema = schema;
     StructType struct = schema.asStruct();
     this.expr = Binder.bind(struct, Expressions.rewriteNot(unbound), caseSensitive);
   }
@@ -94,8 +97,9 @@ public class ParquetDictionaryRowGroupFilter {
         PrimitiveType colType = fileSchema.getType(desc.getPath()).asPrimitiveType();
         if (colType.getId() != null) {
           int id = colType.getId().intValue();
+          Type icebergType = schema.findType(id);
           cols.put(id, desc);
-          conversions.put(id, ParquetConversions.converterFromParquet(colType));
+          conversions.put(id, ParquetConversions.converterFromParquet(colType, icebergType));
         }
       }
 

@@ -755,6 +755,15 @@ public class TestMetricsRowGroupFilter {
     }
   }
 
+  @Test
+  public void testParquetTypePromotion() {
+    Assume.assumeTrue("Only valid for Parquet", format == FileFormat.PARQUET);
+    Schema promotedSchema = new Schema(required(1, "id", Types.LongType.get()));
+    boolean shouldRead = new ParquetMetricsRowGroupFilter(promotedSchema, equal("id", INT_MIN_VALUE + 1),
+            true).shouldRead(parquetSchema, rowGroupMetadata);
+    Assert.assertTrue("Should succeed with promoted schema", shouldRead);
+  }
+
   private boolean shouldRead(Expression expression) {
     return shouldRead(expression, true);
   }
