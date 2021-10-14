@@ -79,6 +79,8 @@ public class HiveTableOperations extends BaseMetastoreTableOperations {
   private static final long HIVE_TABLE_LEVEL_LOCK_EVICT_MS_DEFAULT = TimeUnit.MINUTES.toMillis(10);
 
   private static final long HIVE_ACQUIRE_LOCK_STATE_TIMEOUT_MS_DEFAULT = 3 * 60 * 1000; // 3 minutes
+  private static final String HIVE_CHECK_LOCK_TIMEOUT_MS = "iceberg.hive.check-lock-timeout-ms";
+  private static final long HIVE_CHECK_LOCK_TIMEOUT_MS_DEFAULT = 5_000;
   private static final DynMethods.UnboundMethod ALTER_TABLE = DynMethods.builder("alter_table")
       .impl(HiveMetaStoreClient.class, "alter_table_with_environmentContext",
           String.class, String.class, Table.class, EnvironmentContext.class)
@@ -102,6 +104,7 @@ public class HiveTableOperations extends BaseMetastoreTableOperations {
   private final String tableName;
   private final Configuration conf;
   private final long lockAcquireTimeout;
+  private final long checkLockTimeout;
 
   private FileIO fileIO;
 
@@ -114,6 +117,7 @@ public class HiveTableOperations extends BaseMetastoreTableOperations {
     this.tableName = table;
     this.lockAcquireTimeout =
         conf.getLong(HIVE_ACQUIRE_LOCK_STATE_TIMEOUT_MS, HIVE_ACQUIRE_LOCK_STATE_TIMEOUT_MS_DEFAULT);
+    this.checkLockTimeout = conf.getLong(HIVE_CHECK_LOCK_TIMEOUT_MS, HIVE_CHECK_LOCK_TIMEOUT_MS_DEFAULT);
     long tableLevelLockCacheEvictionTimeout =
             conf.getLong(HIVE_TABLE_LEVEL_LOCK_EVICT_MS, HIVE_TABLE_LEVEL_LOCK_EVICT_MS_DEFAULT);
     initTableLevelLockCache(tableLevelLockCacheEvictionTimeout);
@@ -297,15 +301,23 @@ public class HiveTableOperations extends BaseMetastoreTableOperations {
 
     final long start = System.currentTimeMillis();
     long duration = 0;
+    long callDuration = 0;
     boolean timeout = false;
     try {
       while (!timeout && state.equals(LockState.WAITING)) {
+        long callStart = System.currentTimeMillis();
         lockResponse = metaClients.run(client -> client.checkLock(lockId));
+        // if check lock call takes too long, there must be something wrong with hive metastore server
+        callDuration = System.currentTimeMillis() - callStart;
         state = lockResponse.getState();
+
+        if (state.equals(LockState.ACQUIRED)) {
+          break;
+        }
 
         // check timeout
         duration = System.currentTimeMillis() - start;
-        if (duration > lockAcquireTimeout) {
+        if (duration > lockAcquireTimeout || callDuration > checkLockTimeout) {
           timeout = true;
         } else {
           Thread.sleep(50);
@@ -321,9 +333,10 @@ public class HiveTableOperations extends BaseMetastoreTableOperations {
     }
 
     // timeout and do not have lock acquired
-    if (timeout && !state.equals(LockState.ACQUIRED)) {
-      throw new CommitFailedException(String.format("Timed out after %s ms waiting for lock on %s.%s",
-          duration, database, tableName));
+    if (timeout) {
+      throw new CommitFailedException(
+              String.format("Timed out after %s ms waiting for lock on %s.%s. Last check lock call takes %s ms",
+                      duration, database, tableName, callDuration));
     }
 
     if (!state.equals(LockState.ACQUIRED)) {
