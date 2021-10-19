@@ -22,6 +22,7 @@ package org.apache.iceberg;
 import org.apache.iceberg.expressions.Expressions;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableSet;
 import org.apache.iceberg.relocated.com.google.common.collect.Iterables;
+import org.apache.iceberg.relocated.com.google.common.collect.Sets;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Test;
@@ -180,4 +181,35 @@ public class TestSnapshot extends TableTestBase {
     Assert.assertEquals("Spec ID must match", thirdSnapshotDeleteFile.specId(), addedDeleteFile.specId());
     Assert.assertEquals("Partition must match", thirdSnapshotDeleteFile.partition(), addedDeleteFile.partition());
   }
+
+  public void testFileChanges() {
+    Assume.assumeFalse("Only support equality-delete in format v2.", formatVersion < 2);
+
+    table.newRowDelta()
+        .addRows(FILE_A)
+        .addRows(FILE_B)
+        .addDeletes(FILE_A_DELETES)
+        .addDeletes(FILE_B_DELETES)
+        .commit();
+    Snapshot oldSnapshot = table.currentSnapshot();
+
+    validateFiles(oldSnapshot.addedFiles(), FILE_A, FILE_B);
+    validateFiles(oldSnapshot.deletedFiles());
+    validateDeleteFiles(oldSnapshot.addedDeleteFiles(FILE_IO), FILE_A_DELETES, FILE_B_DELETES);
+    validateDeleteFiles(oldSnapshot.removedDeleteFiles(FILE_IO));
+
+    table.newRewrite().rewriteFiles(
+        Sets.newHashSet(FILE_B),
+        Sets.newHashSet(FILE_A_DELETES, FILE_B_DELETES),
+        Sets.newHashSet(FILE_C),
+        Sets.newHashSet(FILE_A2_DELETES)
+    ).validateFromSnapshot(oldSnapshot.snapshotId()).commit();
+    Snapshot newSnapshot = table.currentSnapshot();
+
+    validateFiles(newSnapshot.addedFiles(), FILE_C);
+    validateFiles(newSnapshot.deletedFiles(), FILE_B);
+    validateDeleteFiles(newSnapshot.addedDeleteFiles(FILE_IO), FILE_A2_DELETES);
+    validateDeleteFiles(newSnapshot.removedDeleteFiles(FILE_IO), FILE_A_DELETES, FILE_B_DELETES);
+  }
+
 }

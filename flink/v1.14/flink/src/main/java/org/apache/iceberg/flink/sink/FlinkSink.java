@@ -27,7 +27,6 @@ import java.util.Set;
 import java.util.function.Function;
 import org.apache.flink.api.common.functions.MapFunction;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
-import org.apache.flink.api.common.typeinfo.Types;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.configuration.ReadableConfig;
 import org.apache.flink.streaming.api.datastream.DataStream;
@@ -59,6 +58,7 @@ import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.iceberg.relocated.com.google.common.collect.Sets;
 import org.apache.iceberg.types.TypeUtil;
+import org.apache.iceberg.util.PropertyUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -69,6 +69,9 @@ public class FlinkSink {
 
   private static final String ICEBERG_STREAM_WRITER_NAME = IcebergStreamWriter.class.getSimpleName();
   private static final String ICEBERG_FILES_COMMITTER_NAME = IcebergFilesCommitter.class.getSimpleName();
+  private static final String ICEBERG_REWRITE_TASKS_EMITTER_NAME = IcebergRewriteTaskEmitter.class.getSimpleName();
+  private static final String ICEBERG_STREAM_REWRITER_NAME = IcebergStreamRewriter.class.getSimpleName();
+  private static final String ICEBERG_REWRITE_FILES_COMMITTER_NAME = IcebergRewriteFilesCommitter.class.getSimpleName();
 
   private FlinkSink() {
   }
@@ -133,6 +136,8 @@ public class FlinkSink {
     private ReadableConfig readableConfig = new Configuration();
     private final Map<String, String> writeOptions = Maps.newHashMap();
     private FlinkWriteConf flinkWriteConf = null;
+    private boolean rewrite = false;
+    private Integer rewriteParallelism = null;
 
     private Builder() {
     }
@@ -305,6 +310,29 @@ public class FlinkSink {
       return this;
     }
 
+    /**
+     * Configuring whether to enable the rewrite operator. The rewrite operator will rewrite committed files between
+     * multiple checkpoints.
+     *
+     * @param enabled indicate whether it should rewrite committed files.
+     * @return {@link Builder} to connect the iceberg table.
+     */
+    public Builder rewrite(boolean enabled) {
+      this.rewrite = enabled;
+      return this;
+    }
+
+    /**
+     * Configuring the rewrite parallel number for iceberg stream rewriter.
+     *
+     * @param newRewriteParallelism the number of parallel iceberg stream rewriter.
+     * @return {@link Builder} to connect the iceberg table.
+     */
+    public Builder rewriteParallelism(int newRewriteParallelism) {
+      this.rewriteParallelism = newRewriteParallelism;
+      return this;
+    }
+
     private <T> DataStreamSink<T> chainIcebergOperators() {
       Preconditions.checkArgument(inputCreator != null,
           "Please use forRowData() or forMapperOutputType() to initialize the input DataStream.");
@@ -337,12 +365,20 @@ public class FlinkSink {
       SingleOutputStreamOperator<WriteResult> writerStream = appendWriter(distributeStream, flinkRowType,
           equalityFieldIds);
 
+      boolean rewriteEnabled = rewrite || PropertyUtil.propertyAsBoolean(table.properties(),
+          FlinkSinkOptions.STREAMING_REWRITE_ENABLE, FlinkSinkOptions.STREAMING_REWRITE_ENABLE_DEFAULT);
+
       // Add single-parallelism committer that commits files
       // after successful checkpoint or end of input
-      SingleOutputStreamOperator<Void> committerStream = appendCommitter(writerStream);
+      SingleOutputStreamOperator<CommitResult> committerStream = appendCommitter(writerStream);
+
+      // Add parallel rewriter and single-parallelism committer to rewrite committed files
+      // when streaming rewrite is enable.
+      SingleOutputStreamOperator<?> rewriterStream = rewriteEnabled ?
+          appendRewriter(committerStream) : committerStream;
 
       // Add dummy discard sink
-      return appendDummySink(committerStream);
+      return appendDummySink(rewriterStream);
     }
 
     /**
@@ -381,7 +417,7 @@ public class FlinkSink {
     }
 
     @SuppressWarnings("unchecked")
-    private <T> DataStreamSink<T> appendDummySink(SingleOutputStreamOperator<Void> committerStream) {
+    private <T> DataStreamSink<T> appendDummySink(SingleOutputStreamOperator<?> committerStream) {
       DataStreamSink<T> resultStream = committerStream
           .addSink(new DiscardingSink())
           .name(operatorName(String.format("IcebergSink %s", this.table.name())))
@@ -392,13 +428,45 @@ public class FlinkSink {
       return resultStream;
     }
 
-    private SingleOutputStreamOperator<Void> appendCommitter(SingleOutputStreamOperator<WriteResult> writerStream) {
+    private SingleOutputStreamOperator<?> appendRewriter(SingleOutputStreamOperator<CommitResult> committerStream) {
+      Integer fileRewriterParallelism = rewriteParallelism;
+      if (fileRewriterParallelism == null) {
+        // Fallback to use rewrite parallelism parsed from table properties if don't specify in job level.
+        String parallelism = table.properties().get(FlinkSinkOptions.STREAMING_REWRITE_PARALLELISM);
+        fileRewriterParallelism = parallelism != null ? Integer.valueOf(parallelism) :
+            FlinkSinkOptions.STREAMING_REWRITE_PARALLELISM_DEFAULT;
+      }
+
+      IcebergRewriteTaskEmitter emitter = new IcebergRewriteTaskEmitter(tableLoader);
+      SingleOutputStreamOperator<RewriteTask> emitterStream = committerStream
+          .transform(operatorName(ICEBERG_REWRITE_TASKS_EMITTER_NAME), TypeInformation.of(RewriteTask.class), emitter)
+          .setParallelism(1)
+          .setMaxParallelism(1);
+      if (uidPrefix != null) {
+        emitterStream = emitterStream.uid(uidPrefix + "-rewriter");
+      }
+
+      IcebergStreamRewriter rewriter = new IcebergStreamRewriter(tableLoader);
+      SingleOutputStreamOperator<RewriteResult> rewriterStream = emitterStream
+          .transform(operatorName(ICEBERG_STREAM_REWRITER_NAME), TypeInformation.of(RewriteResult.class), rewriter);
+      if (fileRewriterParallelism != null) {
+        rewriterStream = rewriterStream.setParallelism(fileRewriterParallelism);
+      }
+
+      IcebergRewriteFilesCommitter committer = new IcebergRewriteFilesCommitter(tableLoader);
+      return rewriterStream
+          .transform(operatorName(ICEBERG_REWRITE_FILES_COMMITTER_NAME), TypeInformation.of(Void.class), committer)
+          .setParallelism(1)
+          .setMaxParallelism(1);
+    }
+
+    private SingleOutputStreamOperator<CommitResult> appendCommitter(
+        SingleOutputStreamOperator<WriteResult> writerStream) {
       IcebergFilesCommitter filesCommitter = new IcebergFilesCommitter(
           tableLoader, flinkWriteConf.overwriteMode(), snapshotProperties,
           flinkWriteConf.workerPoolSize());
-      SingleOutputStreamOperator<Void> committerStream = writerStream
-          .transform(operatorName(ICEBERG_FILES_COMMITTER_NAME), Types.VOID, filesCommitter)
-          .setParallelism(1)
+      SingleOutputStreamOperator<CommitResult> committerStream = writerStream
+          .transform(operatorName(ICEBERG_FILES_COMMITTER_NAME), TypeInformation.of(CommitResult.class), filesCommitter)
           .setMaxParallelism(1);
       if (uidPrefix != null) {
         committerStream = committerStream.uid(uidPrefix + "-committer");

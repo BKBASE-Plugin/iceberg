@@ -86,6 +86,11 @@ abstract class BaseTableScan extends BaseScan<TableScan, FileScanTask, CombinedS
   }
 
   @Override
+  public TableScan useManifests(Iterable<ManifestFile> manifests) {
+    throw new UnsupportedOperationException("Specific manifests scan is not supported");
+  }
+
+  @Override
   public TableScan useSnapshot(long scanSnapshotId) {
     Preconditions.checkArgument(snapshotId() == null,
         "Cannot override snapshot, already set to id=%s", snapshotId());
