@@ -119,7 +119,7 @@ public class TestIcebergFilesCommitter extends TableTestBase {
     long checkpointId = 0;
     long timestamp = 0;
     JobID jobId = new JobID();
-    try (OneInputStreamOperatorTestHarness<WriteResult, Void> harness = createStreamSink(jobId)) {
+    try (OneInputStreamOperatorTestHarness<WriteResult, CommitResult> harness = createStreamSink(jobId)) {
       harness.setup();
       harness.open();
 
@@ -151,7 +151,7 @@ public class TestIcebergFilesCommitter extends TableTestBase {
     JobID jobId = new JobID();
     long checkpointId = 0;
     long timestamp = 0;
-    try (OneInputStreamOperatorTestHarness<WriteResult, Void> harness = createStreamSink(jobId)) {
+    try (OneInputStreamOperatorTestHarness<WriteResult, CommitResult> harness = createStreamSink(jobId)) {
       harness.setup();
       harness.open();
 
@@ -182,7 +182,7 @@ public class TestIcebergFilesCommitter extends TableTestBase {
     long timestamp = 0;
 
     JobID jobID = new JobID();
-    try (OneInputStreamOperatorTestHarness<WriteResult, Void> harness = createStreamSink(jobID)) {
+    try (OneInputStreamOperatorTestHarness<WriteResult, CommitResult> harness = createStreamSink(jobID)) {
       harness.setup();
       harness.open();
       assertSnapshotSize(0);
@@ -217,7 +217,7 @@ public class TestIcebergFilesCommitter extends TableTestBase {
     long timestamp = 0;
 
     JobID jobId = new JobID();
-    try (OneInputStreamOperatorTestHarness<WriteResult, Void> harness = createStreamSink(jobId)) {
+    try (OneInputStreamOperatorTestHarness<WriteResult, CommitResult> harness = createStreamSink(jobId)) {
       harness.setup();
       harness.open();
 
@@ -268,7 +268,7 @@ public class TestIcebergFilesCommitter extends TableTestBase {
     long timestamp = 0;
 
     JobID jobId = new JobID();
-    try (OneInputStreamOperatorTestHarness<WriteResult, Void> harness = createStreamSink(jobId)) {
+    try (OneInputStreamOperatorTestHarness<WriteResult, CommitResult> harness = createStreamSink(jobId)) {
       harness.setup();
       harness.open();
 
@@ -317,7 +317,7 @@ public class TestIcebergFilesCommitter extends TableTestBase {
     OperatorSubtaskState snapshot;
 
     JobID jobId = new JobID();
-    try (OneInputStreamOperatorTestHarness<WriteResult, Void> harness = createStreamSink(jobId)) {
+    try (OneInputStreamOperatorTestHarness<WriteResult, CommitResult> harness = createStreamSink(jobId)) {
       harness.setup();
       harness.open();
 
@@ -341,7 +341,7 @@ public class TestIcebergFilesCommitter extends TableTestBase {
     }
 
     // Restore from the given snapshot
-    try (OneInputStreamOperatorTestHarness<WriteResult, Void> harness = createStreamSink(jobId)) {
+    try (OneInputStreamOperatorTestHarness<WriteResult, CommitResult> harness = createStreamSink(jobId)) {
       harness.setup();
       harness.initializeState(snapshot);
       harness.open();
@@ -376,7 +376,7 @@ public class TestIcebergFilesCommitter extends TableTestBase {
     OperatorSubtaskState snapshot;
     List<RowData> expectedRows = Lists.newArrayList();
     JobID jobId = new JobID();
-    try (OneInputStreamOperatorTestHarness<WriteResult, Void> harness = createStreamSink(jobId)) {
+    try (OneInputStreamOperatorTestHarness<WriteResult, CommitResult> harness = createStreamSink(jobId)) {
       harness.setup();
       harness.open();
 
@@ -394,7 +394,7 @@ public class TestIcebergFilesCommitter extends TableTestBase {
       assertFlinkManifests(1);
     }
 
-    try (OneInputStreamOperatorTestHarness<WriteResult, Void> harness = createStreamSink(jobId)) {
+    try (OneInputStreamOperatorTestHarness<WriteResult, CommitResult> harness = createStreamSink(jobId)) {
       harness.setup();
       harness.initializeState(snapshot);
       harness.open();
@@ -427,7 +427,7 @@ public class TestIcebergFilesCommitter extends TableTestBase {
 
     // Redeploying flink job from external checkpoint.
     JobID newJobId = new JobID();
-    try (OneInputStreamOperatorTestHarness<WriteResult, Void> harness = createStreamSink(newJobId)) {
+    try (OneInputStreamOperatorTestHarness<WriteResult, CommitResult> harness = createStreamSink(newJobId)) {
       harness.setup();
       harness.initializeState(snapshot);
       harness.open();
@@ -465,7 +465,7 @@ public class TestIcebergFilesCommitter extends TableTestBase {
     List<RowData> tableRows = Lists.newArrayList();
 
     JobID oldJobId = new JobID();
-    try (OneInputStreamOperatorTestHarness<WriteResult, Void> harness = createStreamSink(oldJobId)) {
+    try (OneInputStreamOperatorTestHarness<WriteResult, CommitResult> harness = createStreamSink(oldJobId)) {
       harness.setup();
       harness.open();
 
@@ -494,7 +494,7 @@ public class TestIcebergFilesCommitter extends TableTestBase {
     checkpointId = 0;
     timestamp = 0;
     JobID newJobId = new JobID();
-    try (OneInputStreamOperatorTestHarness<WriteResult, Void> harness = createStreamSink(newJobId)) {
+    try (OneInputStreamOperatorTestHarness<WriteResult, CommitResult> harness = createStreamSink(newJobId)) {
       harness.setup();
       harness.open();
 
@@ -528,7 +528,7 @@ public class TestIcebergFilesCommitter extends TableTestBase {
       int jobIndex = i % 3;
       int checkpointId = i / 3;
       JobID jobId = jobs[jobIndex];
-      try (OneInputStreamOperatorTestHarness<WriteResult, Void> harness = createStreamSink(jobId)) {
+      try (OneInputStreamOperatorTestHarness<WriteResult, CommitResult> harness = createStreamSink(jobId)) {
         harness.setup();
         harness.open();
 
@@ -555,7 +555,7 @@ public class TestIcebergFilesCommitter extends TableTestBase {
   @Test
   public void testBoundedStream() throws Exception {
     JobID jobId = new JobID();
-    try (OneInputStreamOperatorTestHarness<WriteResult, Void> harness = createStreamSink(jobId)) {
+    try (OneInputStreamOperatorTestHarness<WriteResult, CommitResult> harness = createStreamSink(jobId)) {
       harness.setup();
       harness.open();
 
@@ -582,7 +582,7 @@ public class TestIcebergFilesCommitter extends TableTestBase {
     final long checkpoint = 10;
 
     JobID jobId = new JobID();
-    try (OneInputStreamOperatorTestHarness<WriteResult, Void> harness = createStreamSink(jobId)) {
+    try (OneInputStreamOperatorTestHarness<WriteResult, CommitResult> harness = createStreamSink(jobId)) {
       harness.setup();
       harness.open();
 
@@ -624,7 +624,7 @@ public class TestIcebergFilesCommitter extends TableTestBase {
     JobID jobId = new JobID();
     FileAppenderFactory<RowData> appenderFactory = createDeletableAppenderFactory();
 
-    try (OneInputStreamOperatorTestHarness<WriteResult, Void> harness = createStreamSink(jobId)) {
+    try (OneInputStreamOperatorTestHarness<WriteResult, CommitResult> harness = createStreamSink(jobId)) {
       harness.setup();
       harness.open();
 
@@ -679,6 +679,66 @@ public class TestIcebergFilesCommitter extends TableTestBase {
   }
 
   @Test
+  public void testValidateDataFileExist() throws Exception {
+    Assume.assumeFalse("Only support equality-delete in format v2.", formatVersion < 2);
+    long timestamp = 0;
+    long checkpoint = 10;
+    JobID jobId = new JobID();
+    FileAppenderFactory<RowData> appenderFactory = createDeletableAppenderFactory();
+
+    RowData insert1 = SimpleDataUtil.createInsert(1, "aaa");
+    DataFile dataFile1 = writeDataFile("data-file-1", ImmutableList.of(insert1));
+
+    try (OneInputStreamOperatorTestHarness<WriteResult, CommitResult> harness = createStreamSink(jobId)) {
+      harness.setup();
+      harness.open();
+
+      // Txn#1: insert the row <1, 'aaa'>
+      harness.processElement(WriteResult.builder()
+              .addDataFiles(dataFile1)
+              .build(),
+          ++timestamp);
+      harness.snapshot(checkpoint, ++timestamp);
+      harness.notifyOfCompletedCheckpoint(checkpoint);
+
+      // Txn#2: Overwrite the committed data-file-1
+      RowData insert2 = SimpleDataUtil.createInsert(2, "bbb");
+      DataFile dataFile2 = writeDataFile("data-file-2", ImmutableList.of(insert2));
+      new TestTableLoader(tablePath)
+          .loadTable()
+          .newOverwrite()
+          .addFile(dataFile2)
+          .deleteFile(dataFile1)
+          .commit();
+    }
+
+    try (OneInputStreamOperatorTestHarness<WriteResult, CommitResult> harness = createStreamSink(jobId)) {
+      harness.setup();
+      harness.open();
+
+      // Txn#3: position-delete the <1, 'aaa'> (NOT committed).
+      DeleteFile deleteFile1 = writePosDeleteFile(appenderFactory,
+          "pos-delete-file-1",
+          ImmutableList.of(Pair.of(dataFile1.path(), 0L)));
+      harness.processElement(WriteResult.builder()
+              .addDeleteFiles(deleteFile1)
+              .addReferencedDataFiles(dataFile1.path())
+              .build(),
+          ++timestamp);
+      harness.snapshot(++checkpoint, ++timestamp);
+
+      // Txn#3: validate will be failure when committing.
+      final long currentCheckpointId = checkpoint;
+      AssertHelpers.assertThrows("Validation should be failure because of non-exist data files.",
+          ValidationException.class, "Cannot commit, missing data files",
+          () -> {
+            harness.notifyOfCompletedCheckpoint(currentCheckpointId);
+            return null;
+          });
+    }
+  }
+
+  @Test
   public void testCommitTwoCheckpointsInSingleTxn() throws Exception {
     Assume.assumeFalse("Only support equality-delete in format v2.", formatVersion < 2);
 
@@ -688,7 +748,7 @@ public class TestIcebergFilesCommitter extends TableTestBase {
     JobID jobId = new JobID();
     FileAppenderFactory<RowData> appenderFactory = createDeletableAppenderFactory();
 
-    try (OneInputStreamOperatorTestHarness<WriteResult, Void> harness = createStreamSink(jobId)) {
+    try (OneInputStreamOperatorTestHarness<WriteResult, CommitResult> harness = createStreamSink(jobId)) {
       harness.setup();
       harness.open();
 
@@ -781,7 +841,7 @@ public class TestIcebergFilesCommitter extends TableTestBase {
     Assert.assertEquals(expectedSnapshotSize, Lists.newArrayList(table.snapshots()).size());
   }
 
-  private OneInputStreamOperatorTestHarness<WriteResult, Void> createStreamSink(JobID jobID)
+  private OneInputStreamOperatorTestHarness<WriteResult, CommitResult> createStreamSink(JobID jobID)
       throws Exception {
     TestOperatorFactory factory = TestOperatorFactory.of(tablePath);
     return new OneInputStreamOperatorTestHarness<>(factory, createEnvironment(jobID));
@@ -800,8 +860,8 @@ public class TestIcebergFilesCommitter extends TableTestBase {
         .build();
   }
 
-  private static class TestOperatorFactory extends AbstractStreamOperatorFactory<Void>
-      implements OneInputStreamOperatorFactory<WriteResult, Void> {
+  private static class TestOperatorFactory extends AbstractStreamOperatorFactory<CommitResult>
+      implements OneInputStreamOperatorFactory<WriteResult, CommitResult> {
     private final String tablePath;
 
     private TestOperatorFactory(String tablePath) {
@@ -814,7 +874,8 @@ public class TestIcebergFilesCommitter extends TableTestBase {
 
     @Override
     @SuppressWarnings("unchecked")
-    public <T extends StreamOperator<Void>> T createStreamOperator(StreamOperatorParameters<Void> param) {
+    public <T extends StreamOperator<CommitResult>> T createStreamOperator(
+        StreamOperatorParameters<CommitResult> param) {
       IcebergFilesCommitter committer = new IcebergFilesCommitter(new TestTableLoader(tablePath), false);
       committer.setup(param.getContainingTask(), param.getStreamConfig(), param.getOutput());
       return (T) committer;
