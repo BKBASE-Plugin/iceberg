@@ -792,14 +792,15 @@ public class TestIcebergFilesCommitter extends TableTestBase {
 
   private DeleteFile writeEqDeleteFile(FileAppenderFactory<RowData> appenderFactory,
                                        String filename, List<RowData> deletes) throws IOException {
-    return SimpleDataUtil.writeEqDeleteFile(table, FileFormat.PARQUET, tablePath, filename, appenderFactory, deletes);
+    return SimpleDataUtil
+        .writeEqDeleteFile(table, FileFormat.PARQUET, tablePath, filename, appenderFactory, null, deletes);
   }
 
   private DeleteFile writePosDeleteFile(FileAppenderFactory<RowData> appenderFactory,
                                         String filename,
                                         List<Pair<CharSequence, Long>> positions) throws IOException {
-    return SimpleDataUtil.writePosDeleteFile(table, FileFormat.PARQUET, tablePath, filename, appenderFactory,
-        positions);
+    return SimpleDataUtil
+        .writePosDeleteFile(table, FileFormat.PARQUET, tablePath, filename, appenderFactory, null, positions);
   }
 
   private FileAppenderFactory<RowData> createDeletableAppenderFactory() {
