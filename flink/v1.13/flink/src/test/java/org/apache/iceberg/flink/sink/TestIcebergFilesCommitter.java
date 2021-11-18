@@ -61,6 +61,7 @@ import org.apache.iceberg.io.WriteResult;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.util.Pair;
+import org.apache.iceberg.util.StructLikeWrapper;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
@@ -80,30 +81,22 @@ public class TestIcebergFilesCommitter extends TableTestBase {
   private File flinkManifestFolder;
 
   private final FileFormat format;
-  private final boolean partitioned;
 
-  @Parameterized.Parameters(name = "FileFormat = {0}, FormatVersion={1}, Partitioned={2}")
+  @Parameterized.Parameters(name = "FileFormat = {0}, FormatVersion={1}")
   public static Object[][] parameters() {
     return new Object[][] {
-        new Object[] {"avro", 1, false},
-        new Object[] {"avro", 1, true},
-        new Object[] {"avro", 2, false},
-        new Object[] {"avro", 2, true},
-        new Object[] {"parquet", 1, false},
-        new Object[] {"parquet", 1, true},
-        new Object[] {"parquet", 2, false},
-        new Object[] {"parquet", 2, true},
-        new Object[] {"orc", 1, false},
-        new Object[] {"orc", 1, true},
-        new Object[] {"orc", 2, false},
-        new Object[] {"orc", 2, true},
+        new Object[] {"avro", 1},
+        new Object[] {"avro", 2},
+        new Object[] {"parquet", 1},
+        new Object[] {"parquet", 2},
+        new Object[] {"orc", 1},
+        new Object[] {"orc", 2},
     };
   }
 
-  public TestIcebergFilesCommitter(String format, int formatVersion, boolean partitioned) {
+  public TestIcebergFilesCommitter(String format, int formatVersion) {
     super(formatVersion);
     this.format = FileFormat.valueOf(format.toUpperCase(Locale.ENGLISH));
-    this.partitioned = partitioned;
   }
 
   @Override
@@ -118,10 +111,7 @@ public class TestIcebergFilesCommitter extends TableTestBase {
     tablePath = tableDir.getAbsolutePath();
 
     // Construct the iceberg table.
-    PartitionSpec spec = !partitioned ? PartitionSpec.unpartitioned() :
-        PartitionSpec.builderFor(SimpleDataUtil.SCHEMA).identity("data").build();
-
-    table = create(SimpleDataUtil.SCHEMA, spec);
+    table = create(SimpleDataUtil.SCHEMA, PartitionSpec.unpartitioned());
 
     table.updateProperties()
         .set(DEFAULT_FILE_FORMAT, format.name())
@@ -132,12 +122,10 @@ public class TestIcebergFilesCommitter extends TableTestBase {
 
   @Test
   public void testCommitTxnWithoutDataFiles() throws Exception {
-    Assume.assumeTrue("Only support unpartitioned table.", !partitioned);
-
     long checkpointId = 0;
     long timestamp = 0;
     JobID jobId = new JobID();
-    try (OneInputStreamOperatorTestHarness<WriteResult, CommitResult> harness = createStreamSink(jobId)) {
+    try (OneInputStreamOperatorTestHarness<WriteResult, CommitResult> harness = createStreamSink(jobId, false)) {
       harness.setup();
       harness.open();
 
@@ -162,7 +150,6 @@ public class TestIcebergFilesCommitter extends TableTestBase {
 
   @Test
   public void testMaxContinuousEmptyCommits() throws Exception {
-    Assume.assumeTrue("Only support unpartitioned table.", !partitioned);
     table.updateProperties()
         .set(MAX_CONTINUOUS_EMPTY_COMMITS, "3")
         .commit();
@@ -170,7 +157,7 @@ public class TestIcebergFilesCommitter extends TableTestBase {
     JobID jobId = new JobID();
     long checkpointId = 0;
     long timestamp = 0;
-    try (OneInputStreamOperatorTestHarness<WriteResult, CommitResult> harness = createStreamSink(jobId)) {
+    try (OneInputStreamOperatorTestHarness<WriteResult, CommitResult> harness = createStreamSink(jobId, false)) {
       harness.setup();
       harness.open();
 
@@ -191,8 +178,6 @@ public class TestIcebergFilesCommitter extends TableTestBase {
 
   @Test
   public void testCommitTxn() throws Exception {
-    Assume.assumeTrue("Only support unpartitioned table.", !partitioned);
-
     // Test with 3 continues checkpoints:
     //   1. snapshotState for checkpoint#1
     //   2. notifyCheckpointComplete for checkpoint#1
@@ -203,7 +188,7 @@ public class TestIcebergFilesCommitter extends TableTestBase {
     long timestamp = 0;
 
     JobID jobID = new JobID();
-    try (OneInputStreamOperatorTestHarness<WriteResult, CommitResult> harness = createStreamSink(jobID)) {
+    try (OneInputStreamOperatorTestHarness<WriteResult, CommitResult> harness = createStreamSink(jobID, false)) {
       harness.setup();
       harness.open();
       assertSnapshotSize(0);
@@ -230,8 +215,6 @@ public class TestIcebergFilesCommitter extends TableTestBase {
 
   @Test
   public void testOrderedEventsBetweenCheckpoints() throws Exception {
-    Assume.assumeTrue("Only support unpartitioned table.", !partitioned);
-
     // It's possible that two checkpoints happen in the following orders:
     //   1. snapshotState for checkpoint#1;
     //   2. snapshotState for checkpoint#2;
@@ -240,7 +223,7 @@ public class TestIcebergFilesCommitter extends TableTestBase {
     long timestamp = 0;
 
     JobID jobId = new JobID();
-    try (OneInputStreamOperatorTestHarness<WriteResult, CommitResult> harness = createStreamSink(jobId)) {
+    try (OneInputStreamOperatorTestHarness<WriteResult, CommitResult> harness = createStreamSink(jobId, false)) {
       harness.setup();
       harness.open();
 
@@ -283,8 +266,6 @@ public class TestIcebergFilesCommitter extends TableTestBase {
 
   @Test
   public void testDisorderedEventsBetweenCheckpoints() throws Exception {
-    Assume.assumeTrue("Only support unpartitioned table.", !partitioned);
-
     // It's possible that the two checkpoints happen in the following orders:
     //   1. snapshotState for checkpoint#1;
     //   2. snapshotState for checkpoint#2;
@@ -293,7 +274,7 @@ public class TestIcebergFilesCommitter extends TableTestBase {
     long timestamp = 0;
 
     JobID jobId = new JobID();
-    try (OneInputStreamOperatorTestHarness<WriteResult, CommitResult> harness = createStreamSink(jobId)) {
+    try (OneInputStreamOperatorTestHarness<WriteResult, CommitResult> harness = createStreamSink(jobId, false)) {
       harness.setup();
       harness.open();
 
@@ -336,15 +317,13 @@ public class TestIcebergFilesCommitter extends TableTestBase {
 
   @Test
   public void testRecoveryFromValidSnapshot() throws Exception {
-    Assume.assumeTrue("Only support unpartitioned table.", !partitioned);
-
     long checkpointId = 0;
     long timestamp = 0;
     List<RowData> expectedRows = Lists.newArrayList();
     OperatorSubtaskState snapshot;
 
     JobID jobId = new JobID();
-    try (OneInputStreamOperatorTestHarness<WriteResult, CommitResult> harness = createStreamSink(jobId)) {
+    try (OneInputStreamOperatorTestHarness<WriteResult, CommitResult> harness = createStreamSink(jobId, false)) {
       harness.setup();
       harness.open();
 
@@ -368,7 +347,7 @@ public class TestIcebergFilesCommitter extends TableTestBase {
     }
 
     // Restore from the given snapshot
-    try (OneInputStreamOperatorTestHarness<WriteResult, CommitResult> harness = createStreamSink(jobId)) {
+    try (OneInputStreamOperatorTestHarness<WriteResult, CommitResult> harness = createStreamSink(jobId, false)) {
       harness.setup();
       harness.initializeState(snapshot);
       harness.open();
@@ -396,8 +375,6 @@ public class TestIcebergFilesCommitter extends TableTestBase {
 
   @Test
   public void testRecoveryFromSnapshotWithoutCompletedNotification() throws Exception {
-    Assume.assumeTrue("Only support unpartitioned table.", !partitioned);
-
     // We've two steps in checkpoint: 1. snapshotState(ckp); 2. notifyCheckpointComplete(ckp). It's possible that we
     // flink job will restore from a checkpoint with only step#1 finished.
     long checkpointId = 0;
@@ -405,7 +382,7 @@ public class TestIcebergFilesCommitter extends TableTestBase {
     OperatorSubtaskState snapshot;
     List<RowData> expectedRows = Lists.newArrayList();
     JobID jobId = new JobID();
-    try (OneInputStreamOperatorTestHarness<WriteResult, CommitResult> harness = createStreamSink(jobId)) {
+    try (OneInputStreamOperatorTestHarness<WriteResult, CommitResult> harness = createStreamSink(jobId, false)) {
       harness.setup();
       harness.open();
 
@@ -423,7 +400,7 @@ public class TestIcebergFilesCommitter extends TableTestBase {
       assertFlinkManifests(1);
     }
 
-    try (OneInputStreamOperatorTestHarness<WriteResult, CommitResult> harness = createStreamSink(jobId)) {
+    try (OneInputStreamOperatorTestHarness<WriteResult, CommitResult> harness = createStreamSink(jobId, false)) {
       harness.setup();
       harness.initializeState(snapshot);
       harness.open();
@@ -456,7 +433,7 @@ public class TestIcebergFilesCommitter extends TableTestBase {
 
     // Redeploying flink job from external checkpoint.
     JobID newJobId = new JobID();
-    try (OneInputStreamOperatorTestHarness<WriteResult, CommitResult> harness = createStreamSink(newJobId)) {
+    try (OneInputStreamOperatorTestHarness<WriteResult, CommitResult> harness = createStreamSink(newJobId, false)) {
       harness.setup();
       harness.initializeState(snapshot);
       harness.open();
@@ -488,15 +465,13 @@ public class TestIcebergFilesCommitter extends TableTestBase {
 
   @Test
   public void testStartAnotherJobToWriteSameTable() throws Exception {
-    Assume.assumeTrue("Only support unpartitioned table.", !partitioned);
-
     long checkpointId = 0;
     long timestamp = 0;
     List<RowData> rows = Lists.newArrayList();
     List<RowData> tableRows = Lists.newArrayList();
 
     JobID oldJobId = new JobID();
-    try (OneInputStreamOperatorTestHarness<WriteResult, CommitResult> harness = createStreamSink(oldJobId)) {
+    try (OneInputStreamOperatorTestHarness<WriteResult, CommitResult> harness = createStreamSink(oldJobId, false)) {
       harness.setup();
       harness.open();
 
@@ -525,7 +500,7 @@ public class TestIcebergFilesCommitter extends TableTestBase {
     checkpointId = 0;
     timestamp = 0;
     JobID newJobId = new JobID();
-    try (OneInputStreamOperatorTestHarness<WriteResult, CommitResult> harness = createStreamSink(newJobId)) {
+    try (OneInputStreamOperatorTestHarness<WriteResult, CommitResult> harness = createStreamSink(newJobId, false)) {
       harness.setup();
       harness.open();
 
@@ -551,8 +526,6 @@ public class TestIcebergFilesCommitter extends TableTestBase {
 
   @Test
   public void testMultipleJobsWriteSameTable() throws Exception {
-    Assume.assumeTrue("Only support unpartitioned table.", !partitioned);
-
     long timestamp = 0;
     List<RowData> tableRows = Lists.newArrayList();
 
@@ -561,7 +534,7 @@ public class TestIcebergFilesCommitter extends TableTestBase {
       int jobIndex = i % 3;
       int checkpointId = i / 3;
       JobID jobId = jobs[jobIndex];
-      try (OneInputStreamOperatorTestHarness<WriteResult, CommitResult> harness = createStreamSink(jobId)) {
+      try (OneInputStreamOperatorTestHarness<WriteResult, CommitResult> harness = createStreamSink(jobId, false)) {
         harness.setup();
         harness.open();
 
@@ -587,10 +560,8 @@ public class TestIcebergFilesCommitter extends TableTestBase {
 
   @Test
   public void testBoundedStream() throws Exception {
-    Assume.assumeTrue("Only support unpartitioned table.", !partitioned);
-
     JobID jobId = new JobID();
-    try (OneInputStreamOperatorTestHarness<WriteResult, CommitResult> harness = createStreamSink(jobId)) {
+    try (OneInputStreamOperatorTestHarness<WriteResult, CommitResult> harness = createStreamSink(jobId, false)) {
       harness.setup();
       harness.open();
 
@@ -613,13 +584,11 @@ public class TestIcebergFilesCommitter extends TableTestBase {
 
   @Test
   public void testFlinkManifests() throws Exception {
-    Assume.assumeTrue("Only support unpartitioned table.", !partitioned);
-
     long timestamp = 0;
     final long checkpoint = 10;
 
     JobID jobId = new JobID();
-    try (OneInputStreamOperatorTestHarness<WriteResult, CommitResult> harness = createStreamSink(jobId)) {
+    try (OneInputStreamOperatorTestHarness<WriteResult, CommitResult> harness = createStreamSink(jobId, false)) {
       harness.setup();
       harness.open();
 
@@ -654,7 +623,6 @@ public class TestIcebergFilesCommitter extends TableTestBase {
   @Test
   public void testDeleteFiles() throws Exception {
     Assume.assumeFalse("Only support equality-delete in format v2.", formatVersion < 2);
-    Assume.assumeTrue("Only support unpartitioned table.", !partitioned);
 
     long timestamp = 0;
     long checkpoint = 10;
@@ -662,7 +630,7 @@ public class TestIcebergFilesCommitter extends TableTestBase {
     JobID jobId = new JobID();
     FileAppenderFactory<RowData> appenderFactory = createDeletableAppenderFactory();
 
-    try (OneInputStreamOperatorTestHarness<WriteResult, CommitResult> harness = createStreamSink(jobId)) {
+    try (OneInputStreamOperatorTestHarness<WriteResult, CommitResult> harness = createStreamSink(jobId, false)) {
       harness.setup();
       harness.open();
 
@@ -719,7 +687,6 @@ public class TestIcebergFilesCommitter extends TableTestBase {
   @Test
   public void testCommitTwoCheckpointsInSingleTxn() throws Exception {
     Assume.assumeFalse("Only support equality-delete in format v2.", formatVersion < 2);
-    Assume.assumeTrue("Only support unpartitioned table.", !partitioned);
 
     long timestamp = 0;
     long checkpoint = 10;
@@ -727,7 +694,7 @@ public class TestIcebergFilesCommitter extends TableTestBase {
     JobID jobId = new JobID();
     FileAppenderFactory<RowData> appenderFactory = createDeletableAppenderFactory();
 
-    try (OneInputStreamOperatorTestHarness<WriteResult, CommitResult> harness = createStreamSink(jobId)) {
+    try (OneInputStreamOperatorTestHarness<WriteResult, CommitResult> harness = createStreamSink(jobId, false)) {
       harness.setup();
       harness.open();
 
@@ -771,15 +738,13 @@ public class TestIcebergFilesCommitter extends TableTestBase {
 
   @Test
   public void testEmitCommitResultForUnpartitioned() throws Exception {
-    Assume.assumeTrue("Only support unpartitioned table.", !partitioned);
-
     long timestamp = 0;
     long checkpoint = 10;
 
     JobID jobId = new JobID();
     FileAppenderFactory<RowData> appenderFactory = createDeletableAppenderFactory();
 
-    try (OneInputStreamOperatorTestHarness<WriteResult, CommitResult> harness = createStreamSink(jobId)) {
+    try (OneInputStreamOperatorTestHarness<WriteResult, CommitResult> harness = createStreamSink(jobId, true)) {
       harness.setup();
       harness.open();
 
@@ -830,13 +795,14 @@ public class TestIcebergFilesCommitter extends TableTestBase {
       long snapshotId = table.currentSnapshot().snapshotId();
       long seqNum = table.currentSnapshot().sequenceNumber();
       int specId = table.spec().specId();
+      StructLikeWrapper partitionWrapper = StructLikeWrapper.forType(table.spec().partitionType());
 
       Assert.assertEquals(1, commitResults.size());
       CommitResult commitResult = commitResults.get(0);
       Assert.assertEquals(snapshotId, commitResult.snapshotId());
       Assert.assertEquals(seqNum, commitResult.sequenceNumber());
       Assert.assertEquals(specId, commitResult.specId());
-      Assert.assertEquals(0, commitResult.partition().size());
+      Assert.assertEquals(partitionWrapper.set(SimpleDataUtil.createPartition(null, null)), commitResult.partition());
 
       Assert.assertEquals(
           Arrays.stream(writeResult.dataFiles()).map(ContentFile::path).collect(Collectors.toSet()),
@@ -855,7 +821,7 @@ public class TestIcebergFilesCommitter extends TableTestBase {
 
   @Test
   public void testEmitCommitResultForPartitioned() throws Exception {
-    Assume.assumeTrue("Only support partitioned table.", partitioned);
+    table.updateSpec().addField("data").commit();
 
     long timestamp = 0;
     long checkpoint = 10;
@@ -865,14 +831,16 @@ public class TestIcebergFilesCommitter extends TableTestBase {
 
     List<String> partitionKeys = Lists.newArrayList("aaa", "bbb");
 
-    try (OneInputStreamOperatorTestHarness<WriteResult, CommitResult> harness = createStreamSink(jobId)) {
+    try (OneInputStreamOperatorTestHarness<WriteResult, CommitResult> harness = createStreamSink(jobId, true)) {
       harness.setup();
       harness.open();
 
       assertMaxCommittedCheckpointId(jobId, -1L);
 
       // construct write results
+      List<StructLike> partitions = Lists.newArrayList();
       List<WriteResult> writeResults = Lists.newArrayList();
+
       StructLike partitionA = SimpleDataUtil.createPartition(null, partitionKeys.get(0));
       DataFile dataFileA = writeDataFile(appenderFactory, "data-file-A", partitionA, ImmutableList.of(
           SimpleDataUtil.createRowData(1, partitionKeys.get(0)),
@@ -890,6 +858,7 @@ public class TestIcebergFilesCommitter extends TableTestBase {
               .addDeleteFiles(deleteFileA)
               .addReferencedDataFiles(dataFileA.path())
               .build();
+      partitions.add(partitionA);
       writeResults.add(writeResultA);
 
       StructLike partitionB = SimpleDataUtil.createPartition(null, partitionKeys.get(1));
@@ -909,6 +878,7 @@ public class TestIcebergFilesCommitter extends TableTestBase {
               .addDeleteFiles(deleteFileB)
               .addReferencedDataFiles(dataFileB.path())
               .build();
+      partitions.add(partitionB);
       writeResults.add(writeResultB);
 
       // construct expect result
@@ -943,18 +913,19 @@ public class TestIcebergFilesCommitter extends TableTestBase {
       // 3. emit commit results
       List<CommitResult> commitResults = harness.extractOutputValues();
       Assert.assertEquals(2, commitResults.size());
-      commitResults.sort(Comparator.comparing(o -> o.partition().get(0, String.class)));
+      commitResults.sort(Comparator.comparing(o -> o.partition().get().get(0, String.class)));
 
       long snapshotId = table.currentSnapshot().snapshotId();
       long seqNum = table.currentSnapshot().sequenceNumber();
       int specId = table.spec().specId();
+      StructLikeWrapper partitionWrapper = StructLikeWrapper.forType(table.spec().partitionType());
       for (int i = 0; i < commitResults.size(); i++) {
         CommitResult commitResult = commitResults.get(i);
         Assert.assertEquals(snapshotId, commitResult.snapshotId());
         Assert.assertEquals(seqNum, commitResult.sequenceNumber());
         Assert.assertEquals(specId, commitResult.specId());
-        Assert.assertEquals(1, commitResult.partition().size());
-        Assert.assertEquals(partitionKeys.get(i), commitResult.partition().get(0, String.class));
+        Assert.assertEquals(partitionWrapper.set(partitions.get(i)), commitResult.partition());
+//        Assert.assertEquals(partitionKeys.get(i), commitResult.partition().get(0, String.class));
 
         WriteResult writeResult = writeResults.get(i);
         Assert.assertEquals(
@@ -1036,9 +1007,10 @@ public class TestIcebergFilesCommitter extends TableTestBase {
     Assert.assertEquals(expectedSnapshotSize, Lists.newArrayList(table.snapshots()).size());
   }
 
-  private OneInputStreamOperatorTestHarness<WriteResult, CommitResult> createStreamSink(JobID jobID)
+  private OneInputStreamOperatorTestHarness<WriteResult, CommitResult> createStreamSink(JobID jobID,
+                                                                                        boolean emitResults)
       throws Exception {
-    TestOperatorFactory factory = TestOperatorFactory.of(tablePath);
+    TestOperatorFactory factory = TestOperatorFactory.of(tablePath, emitResults);
     return new OneInputStreamOperatorTestHarness<>(factory, createEnvironment(jobID));
   }
 
@@ -1058,20 +1030,22 @@ public class TestIcebergFilesCommitter extends TableTestBase {
   private static class TestOperatorFactory extends AbstractStreamOperatorFactory<CommitResult>
       implements OneInputStreamOperatorFactory<WriteResult, CommitResult> {
     private final String tablePath;
+    private final boolean emitResults;
 
-    private TestOperatorFactory(String tablePath) {
+    private TestOperatorFactory(String tablePath, boolean emitResults) {
       this.tablePath = tablePath;
+      this.emitResults = emitResults;
     }
 
-    private static TestOperatorFactory of(String tablePath) {
-      return new TestOperatorFactory(tablePath);
+    private static TestOperatorFactory of(String tablePath, boolean emitResults) {
+      return new TestOperatorFactory(tablePath, emitResults);
     }
 
     @Override
     @SuppressWarnings("unchecked")
     public <T extends StreamOperator<CommitResult>> T createStreamOperator(
         StreamOperatorParameters<CommitResult> param) {
-      IcebergFilesCommitter committer = new IcebergFilesCommitter(new TestTableLoader(tablePath), false);
+      IcebergFilesCommitter committer = new IcebergFilesCommitter(new TestTableLoader(tablePath), false, emitResults);
       committer.setup(param.getContainingTask(), param.getStreamConfig(), param.getOutput());
       return (T) committer;
     }
