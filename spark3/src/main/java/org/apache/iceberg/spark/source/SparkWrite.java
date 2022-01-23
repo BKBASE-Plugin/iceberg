@@ -505,7 +505,8 @@ class SparkWrite {
         overwriteFiles.addFile(file);
         numFiles++;
       }
-      commit(overwriteFiles, epochId, numFiles, String.format("streaming complete overwrite with %d new data files", numFiles));
+      commit(overwriteFiles, epochId, numFiles,
+          String.format("streaming complete overwrite with %d new data files", numFiles));
     }
   }
 
