@@ -180,8 +180,12 @@ class SparkWrite {
     return new WriterFactory(tableBroadcast, format, targetFileSize, writeSchema, dsSchema, partitionedFanoutEnabled);
   }
 
-  private void commitOperation(SnapshotUpdate<?> operation, String description) {
+  private void commitOperation(SnapshotUpdate<?> operation, int numFiles, String description) {
     LOG.info("Committing {} to table {}", description, table);
+    if (numFiles == 0) {
+      return;
+    }
+
     if (applicationId != null) {
       operation.set("spark.app.id", applicationId);
     }
@@ -255,7 +259,7 @@ class SparkWrite {
         append.appendFile(file);
       }
 
-      commitOperation(append, String.format("append with %d new data files", numFiles));
+      commitOperation(append, numFiles, String.format("append with %d new data files", numFiles));
     }
   }
 
@@ -270,7 +274,8 @@ class SparkWrite {
         dynamicOverwrite.addFile(file);
       }
 
-      commitOperation(dynamicOverwrite, String.format("dynamic partition overwrite with %d new data files", numFiles));
+      commitOperation(dynamicOverwrite, numFiles,
+          String.format("dynamic partition overwrite with %d new data files", numFiles));
     }
   }
 
@@ -293,7 +298,7 @@ class SparkWrite {
       }
 
       String commitMsg = String.format("overwrite by filter %s with %d new data files", overwriteExpr, numFiles);
-      commitOperation(overwriteFiles, commitMsg);
+      commitOperation(overwriteFiles, numFiles, commitMsg);
     }
   }
 
@@ -364,7 +369,7 @@ class SparkWrite {
       String commitMsg = String.format(
           "overwrite of %d data files with %d new data files, scanSnapshotId: %d, conflictDetectionFilter: %s",
           numOverwrittenFiles, numAddedFiles, scanSnapshotId, conflictDetectionFilter);
-      commitOperation(overwriteFiles, commitMsg);
+      commitOperation(overwriteFiles, numOverwrittenFiles + numAddedFiles, commitMsg);
     }
 
     private void commitWithSnapshotIsolation(OverwriteFiles overwriteFiles,
@@ -382,7 +387,7 @@ class SparkWrite {
       String commitMsg = String.format(
           "overwrite of %d data files with %d new data files",
           numOverwrittenFiles, numAddedFiles);
-      commitOperation(overwriteFiles, commitMsg);
+      commitOperation(overwriteFiles, numOverwrittenFiles + numAddedFiles, commitMsg);
     }
   }
 
@@ -434,10 +439,10 @@ class SparkWrite {
 
     protected abstract void doCommit(long epochId, WriterCommitMessage[] messages);
 
-    protected <T> void commit(SnapshotUpdate<T> snapshotUpdate, long epochId, String description) {
+    protected <T> void commit(SnapshotUpdate<T> snapshotUpdate, long epochId, int numFiles, String description) {
       snapshotUpdate.set(QUERY_ID_PROPERTY, queryId);
       snapshotUpdate.set(EPOCH_ID_PROPERTY, Long.toString(epochId));
-      commitOperation(snapshotUpdate, description);
+      commitOperation(snapshotUpdate, numFiles, description);
     }
 
     private Long findLastCommittedEpochId() {
@@ -481,7 +486,7 @@ class SparkWrite {
         append.appendFile(file);
         numFiles++;
       }
-      commit(append, epochId, String.format("streaming append with %d new data files", numFiles));
+      commit(append, epochId, numFiles, String.format("streaming append with %d new data files", numFiles));
     }
   }
 
@@ -500,7 +505,7 @@ class SparkWrite {
         overwriteFiles.addFile(file);
         numFiles++;
       }
-      commit(overwriteFiles, epochId, String.format("streaming complete overwrite with %d new data files", numFiles));
+      commit(overwriteFiles, epochId, numFiles, String.format("streaming complete overwrite with %d new data files", numFiles));
     }
   }
 
