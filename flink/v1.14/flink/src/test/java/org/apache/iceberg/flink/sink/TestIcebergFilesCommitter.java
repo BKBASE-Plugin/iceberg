@@ -605,8 +605,10 @@ public class TestIcebergFilesCommitter extends TableTestBase {
       harness.snapshot(checkpoint, ++timestamp);
       List<Path> manifestPaths = assertFlinkManifests(1);
       Path manifestPath = manifestPaths.get(0);
+      String operatorId = harness.getOneInputOperator().getOperatorID().toString();
       Assert.assertEquals("File name should have the expected pattern.",
-          String.format("%s-%05d-%d-%d-%05d.avro", jobId, 0, 0, checkpoint, 1), manifestPath.getFileName().toString());
+          String.format("%s-%s-%05d-%d-%d-%05d.avro", jobId, operatorId, 0, 0, checkpoint, 1),
+          manifestPath.getFileName().toString());
 
       // 2. Read the data files from manifests and assert.
       List<DataFile> dataFiles = FlinkManifestUtil.readDataFiles(createTestingManifestFile(manifestPath), table.io());
@@ -645,8 +647,10 @@ public class TestIcebergFilesCommitter extends TableTestBase {
       harness.snapshot(checkpoint, ++timestamp);
       List<Path> manifestPaths = assertFlinkManifests(1);
       Path manifestPath = manifestPaths.get(0);
+      String operatorId = harness.getOneInputOperator().getOperatorID().toString();
       Assert.assertEquals("File name should have the expected pattern.",
-          String.format("%s-%05d-%d-%d-%05d.avro", jobId, 0, 0, checkpoint, 1), manifestPath.getFileName().toString());
+          String.format("%s-%s-%05d-%d-%d-%05d.avro", jobId, operatorId, 0, 0, checkpoint, 1),
+          manifestPath.getFileName().toString());
 
       // 2. Read the data files from manifests and assert.
       List<DataFile> dataFiles = FlinkManifestUtil.readDataFiles(createTestingManifestFile(manifestPath), table.io());
