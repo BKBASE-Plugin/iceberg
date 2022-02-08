@@ -104,7 +104,7 @@ public abstract class TestDelete extends SparkRowLevelOperationsTestBase {
     sql("DELETE FROM %s WHERE dep = 'hr'", tableName);
 
     Table table = validationCatalog.loadTable(tableIdent);
-    Assert.assertEquals("Should have 2 snapshots", 2, Iterables.size(table.snapshots()));
+    Assert.assertEquals("Should have 0 snapshots", 0, Iterables.size(table.snapshots()));
 
     assertEquals("Should have expected rows",
         ImmutableList.of(),
@@ -176,18 +176,10 @@ public abstract class TestDelete extends SparkRowLevelOperationsTestBase {
 
     Table table = validationCatalog.loadTable(tableIdent);
     Assert.assertEquals("Should have 2 snapshots", 2, Iterables.size(table.snapshots()));
+    Assert.assertEquals("Should have 1 snapshots", 1, Iterables.size(table.snapshots()));
 
     Snapshot currentSnapshot = table.currentSnapshot();
-
-    if (fileFormat.equals("orc") || fileFormat.equals("parquet")) {
-      validateDelete(currentSnapshot, "0", null);
-    } else {
-      if (mode(table) == COPY_ON_WRITE) {
-        validateCopyOnWrite(currentSnapshot, "0", null, null);
-      } else {
-        validateMergeOnRead(currentSnapshot, "0", null, null);
-      }
-    }
+    validateSnapshot(currentSnapshot, "append", "2", null, "0", "3");
 
     assertEquals("Should have expected rows",
         ImmutableList.of(row(1, "hr"), row(2, "hardware"), row(null, "hr")),
