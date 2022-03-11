@@ -93,6 +93,8 @@ public class HiveTableOperations extends BaseMetastoreTableOperations {
   private static final long HIVE_LOCK_CHECK_MAX_WAIT_MS_DEFAULT = 5 * 1000; // 5 seconds
   private static final int HIVE_ICEBERG_METADATA_REFRESH_MAX_RETRIES_DEFAULT = 2;
   private static final long HIVE_TABLE_LEVEL_LOCK_EVICT_MS_DEFAULT = TimeUnit.MINUTES.toMillis(10);
+  private static final String HIVE_CHECK_LOCK_TIMEOUT_MS = "iceberg.hive.check-lock-timeout-ms";
+  private static final long HIVE_CHECK_LOCK_TIMEOUT_MS_DEFAULT = 5_000;
   private static final DynMethods.UnboundMethod ALTER_TABLE = DynMethods.builder("alter_table")
       .impl(IMetaStoreClient.class, "alter_table_with_environmentContext",
           String.class, String.class, Table.class, EnvironmentContext.class)
@@ -146,6 +148,7 @@ public class HiveTableOperations extends BaseMetastoreTableOperations {
   private final long lockAcquireTimeout;
   private final long lockCheckMinWaitTime;
   private final long lockCheckMaxWaitTime;
+  private final long checkLockTimeout;
   private final int metadataRefreshMaxRetries;
   private final FileIO fileIO;
   private final ClientPool<IMetaStoreClient, TException> metaClients;
@@ -164,6 +167,7 @@ public class HiveTableOperations extends BaseMetastoreTableOperations {
         conf.getLong(HIVE_LOCK_CHECK_MIN_WAIT_MS, HIVE_LOCK_CHECK_MIN_WAIT_MS_DEFAULT);
     this.lockCheckMaxWaitTime =
         conf.getLong(HIVE_LOCK_CHECK_MAX_WAIT_MS, HIVE_LOCK_CHECK_MAX_WAIT_MS_DEFAULT);
+    this.checkLockTimeout = conf.getLong(HIVE_CHECK_LOCK_TIMEOUT_MS, HIVE_CHECK_LOCK_TIMEOUT_MS_DEFAULT);
     this.metadataRefreshMaxRetries =
         conf.getInt(HIVE_ICEBERG_METADATA_REFRESH_MAX_RETRIES, HIVE_ICEBERG_METADATA_REFRESH_MAX_RETRIES_DEFAULT);
     long tableLevelLockCacheEvictionTimeout =
@@ -453,10 +457,14 @@ public class HiveTableOperations extends BaseMetastoreTableOperations {
             .onlyRetryOn(WaitingForLockException.class)
             .run(id -> {
               try {
+                long callStart = System.currentTimeMillis();
                 LockResponse response = metaClients.run(client -> client.checkLock(id));
                 LockState newState = response.getState();
                 state.set(newState);
-                if (newState.equals(LockState.WAITING)) {
+                // Normally checkLock call takes ~0.1s, if it takes several seconds, then hive metastore must be on
+                // high pressure, avoid task retry logic to reduce lock requests in hive metastore.
+                long callDuration = System.currentTimeMillis() - callStart;
+                if (callDuration < checkLockTimeout && newState.equals(LockState.WAITING)) {
                   throw new WaitingForLockException("Waiting for lock.");
                 }
               } catch (InterruptedException e) {
