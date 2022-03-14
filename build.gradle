@@ -84,7 +84,7 @@ dependencyRecommendations {
 }
 
 allprojects {
-  group = "org.apache.iceberg"
+  group = "com.tencent.bk.base.datahub"
   version = getProjectVersion()
   repositories {
     mavenCentral()

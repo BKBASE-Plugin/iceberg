@@ -81,10 +81,10 @@ subprojects {
             }
           }
 
-          groupId = 'org.apache.iceberg'
+          groupId = 'com.tencent.bk.base.datahub'
           pom {
             name = 'Apache Iceberg'
-            description = 'A table format for huge analytic datasets'
+            description = 'Apache Iceberg modified by Tencent blueking'
             url = 'https://iceberg.apache.org'
             licenses {
               license {
@@ -92,17 +92,18 @@ subprojects {
                 url = 'http://www.apache.org/licenses/LICENSE-2.0.txt'
               }
             }
-            mailingLists {
-              mailingList {
-                name = 'Dev Mailing List'
-                post = 'dev@iceberg.apache.org'
-                subscribe = 'dev-subscribe@iceberg.apache.org'
-                unsubscribe = 'dev-unsubscribe@iceberg.apache.org'
+            developers {
+              developer {
+                id = 'bk-base'
+                name = 'bk-base'
+                email = 'contactus_bk@tencent.com'
+                roles = Arrays.asList("Manager")
               }
             }
-            issueManagement {
-              system = 'GitHub'
-              url = 'https://github.com/apache/iceberg/issues'
+            scm {
+              connection = 'scm:git:https://github.com/BKBASE-Plugin/iceberg.git'
+              developerConnection = 'scm:git:git@github.com:BKBASE-Plugin/iceberg.git'
+              url = 'https://github.com/BKBASE-Plugin/iceberg/tree/master-bkbase-0.14.x'
             }
           }
         }
@@ -126,7 +127,6 @@ subprojects {
 
     if (project.hasProperty('release')) {
       signing {
-        useGpgCmd()
         sign publishing.publications.apache
       }
     }
