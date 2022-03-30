@@ -29,6 +29,8 @@ import org.apache.iceberg.DataFile;
 import org.apache.iceberg.FileScanTask;
 import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.RewriteFiles;
+import org.apache.iceberg.Snapshot;
+import org.apache.iceberg.SnapshotSummary;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.TableProperties;
 import org.apache.iceberg.encryption.EncryptionManager;
@@ -199,11 +201,14 @@ public abstract class BaseRewriteDataFilesAction<ThisT>
   @Override
   public RewriteDataFilesActionResult execute() {
     CloseableIterable<FileScanTask> fileScanTasks = null;
-    if (table.currentSnapshot() == null) {
+    Snapshot snapshot = table.currentSnapshot();
+    if (snapshot == null) {
       return RewriteDataFilesActionResult.empty();
     }
 
-    long startingSnapshotId = table.currentSnapshot().snapshotId();
+    long startingSnapshotId = snapshot.snapshotId();
+    String totalDeleteFiles = snapshot.summary().getOrDefault(SnapshotSummary.TOTAL_DELETE_FILES_PROP, "0");
+    boolean hasDeleteFiles = Integer.parseInt(totalDeleteFiles) > 0;
     try {
       fileScanTasks = table.newScan()
           .useSnapshot(startingSnapshotId)
@@ -222,9 +227,12 @@ public abstract class BaseRewriteDataFilesAction<ThisT>
     }
 
     Map<StructLikeWrapper, Collection<FileScanTask>> groupedTasks = groupTasksByPartition(fileScanTasks.iterator());
-    Map<StructLikeWrapper, Collection<FileScanTask>> filteredGroupedTasks = groupedTasks.entrySet().stream()
-        .filter(kv -> kv.getValue().size() > 1)
-        .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+    Map<StructLikeWrapper, Collection<FileScanTask>> filteredGroupedTasks = groupedTasks;
+    if (!hasDeleteFiles) {
+      filteredGroupedTasks = groupedTasks.entrySet().stream()
+          .filter(kv -> kv.getValue().size() > 1)
+          .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+    }
 
     // Nothing to rewrite if there's only one DataFile in each partition.
     if (filteredGroupedTasks.isEmpty()) {
