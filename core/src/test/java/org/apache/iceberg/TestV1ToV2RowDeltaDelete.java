@@ -19,15 +19,15 @@
 
 package org.apache.iceberg;
 
-import static org.apache.iceberg.expressions.Expressions.bucket;
-import static org.apache.iceberg.expressions.Expressions.equal;
-
 import java.util.List;
 import org.apache.iceberg.relocated.com.google.common.collect.Iterables;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.relocated.com.google.common.collect.Sets;
 import org.junit.Assert;
 import org.junit.Test;
+
+import static org.apache.iceberg.expressions.Expressions.bucket;
+import static org.apache.iceberg.expressions.Expressions.equal;
 
 public class TestV1ToV2RowDeltaDelete extends TableTestBase {
 
