@@ -134,7 +134,8 @@ public class IcebergRewriteTaskEmitter extends AbstractStreamOperator<RewriteTas
     this.flinkJobId = getContainingTask().getEnvironment().getJobID().toString();
     int subTaskId = getRuntimeContext().getIndexOfThisSubtask();
     int attemptId = getRuntimeContext().getAttemptNumber();
-    this.manifestOutputFileFactory = FlinkManifestUtil.createOutputFileFactory(table, flinkJobId, subTaskId, attemptId);
+    this.manifestOutputFileFactory = FlinkManifestUtil.createOutputFileFactory(table, flinkJobId,
+        getOperatorID().toString(), subTaskId, attemptId);
 
     this.jobIdState = context.getOperatorStateStore().getListState(JOB_ID_DESCRIPTOR);
     this.receivedSnapshotIdState = context.getOperatorStateStore().getListState(RECEIVED_SNAPSHOT_ID_DESCRIPTOR);
