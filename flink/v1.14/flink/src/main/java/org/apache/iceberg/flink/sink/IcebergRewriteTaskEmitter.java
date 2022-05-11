@@ -56,6 +56,7 @@ import org.apache.iceberg.Table;
 import org.apache.iceberg.TableProperties;
 import org.apache.iceberg.flink.TableLoader;
 import org.apache.iceberg.io.CloseableIterable;
+import org.apache.iceberg.io.WriteResult;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.base.Strings;
 import org.apache.iceberg.relocated.com.google.common.collect.FluentIterable;
@@ -162,6 +163,7 @@ public class IcebergRewriteTaskEmitter extends AbstractStreamOperator<RewriteTas
         // has not updated when checkpointing. Therefore, we need to append all data files and delete files
         // which are committed by the restored flink job and append all eq-delete files which are committed by other
         // writer to catch up to the last committed snapshot of the restored flink job.
+        // 历史快照中未重写的数据文件，这些文件重写要在下一次checkpoint才提交，非常大概率和第一次checkpoint时提交的delete-file发生冲突导致失败。
         appendFilesWithin(lastReceivedSnapshotId, lastCommittedSnapshotId, restoredFlinkJobId);
         emitRewriteTask();
         this.lastReceivedSnapshotId = lastCommittedSnapshotId;
@@ -253,6 +255,28 @@ public class IcebergRewriteTaskEmitter extends AbstractStreamOperator<RewriteTas
     for (Long snapshotId : snapshotIds) {
       Snapshot snapshot = table.snapshot(snapshotId);
       if (!VALIDATE_DATA_CHANGE_FILES_OPERATIONS.contains(snapshot.operation())) {
+        // 这里如果是replace，则需要对被删除的数据文件进行遍历，如果在pendingFileGroupsByPartition中发现RewriteFileGroup引用了此文件，则需清空RewriteFileGroup
+        if (DataOperations.REPLACE.equals(snapshot.operation())) {
+          for (DataFile file : snapshot.deletedFiles()) {
+            PartitionSpec spec = table.specs().get(file.specId());
+            StructLikeWrapper partition = StructLikeWrapper.forType(spec.partitionType()).set(file.partition());
+            Deque<RewriteFileGroup> bins = pendingFileGroupsByPartition.getOrDefault(partition, Lists.newLinkedList());
+
+            Iterator<RewriteFileGroup> iterator = bins.iterator();
+            while (iterator.hasNext()) {
+              RewriteFileGroup group = iterator.next();
+              for (DeltaManifests deltaManifests : group.manifestsList()) {
+                WriteResult result = FlinkManifestUtil.readCompletedFiles(deltaManifests, table.io());
+                if (Arrays.stream(result.dataFiles()).anyMatch(f -> f.path().equals(file.path()))) {
+                  LOG.info("file {} was deleted in {}, discard {}", file.path(), snapshotId, group);
+                  iterator.remove();
+                  break;
+                }
+              }
+            }
+          }
+        }
+
         continue;
       }
 
@@ -419,7 +443,7 @@ public class IcebergRewriteTaskEmitter extends AbstractStreamOperator<RewriteTas
       }
 
       long rewriteFilesSize = 0;
-      List<DataFile> pendingFiles = Lists.newArrayList();
+      Set<DataFile> pendingFiles = Sets.newHashSet();  // dataFiles某些情况下可能跨snapshot包含重复数据文件，使用set去重。
       for (DataFile dataFile : dataFiles) {
         // Only stat not reach target size data files which should be considered for rewriting
         // and keep rewrite file group size as multiple of target file size.
@@ -462,8 +486,11 @@ public class IcebergRewriteTaskEmitter extends AbstractStreamOperator<RewriteTas
     }
 
     private boolean canPick(RewriteFileGroup bin) {
-      return !bin.isEmpty() && (bin.rewriteFilesSize() >= targetFileSize || bin.totalFilesCount() >= maxGroupFiles ||
-          getCommitNumAfter(table, bin.latestSnapshotId(), flinkJobId) > maxWaitingCommits);
+      int commits = getCommitNumAfter(table, bin.latestSnapshotId(), flinkJobId);
+      boolean result = !bin.isEmpty() && (bin.rewriteFilesSize() >= targetFileSize ||
+          bin.totalFilesCount() >= maxGroupFiles || commits > maxWaitingCommits);
+      LOG.info("can pick rewrite files group? {} {} {}", result, commits, bin.toString());
+      return result;
     }
 
     private Iterable<CombinedScanTask> planTasks(RewriteFileGroup fileGroup) {
@@ -475,7 +502,6 @@ public class IcebergRewriteTaskEmitter extends AbstractStreamOperator<RewriteTas
 
       CloseableIterable<FileScanTask> filtered = CloseableIterable.withNoopClose(
           FluentIterable.from(scanTasks).filter(scanTask -> shouldBeRewritten(scanTask.file())));
-
       CloseableIterable<FileScanTask> splitFiles = TableScanUtil.splitFiles(filtered, splitSize(totalSize(filtered)));
       return Iterables.filter(
           TableScanUtil.planTasks(splitFiles, writeMaxFileSize, 1, 0),
