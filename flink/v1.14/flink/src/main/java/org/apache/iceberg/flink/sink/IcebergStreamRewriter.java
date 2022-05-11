@@ -126,7 +126,7 @@ class IcebergStreamRewriter extends AbstractStreamOperator<RewriteResult>
     }
 
     List<DataFile> addedDataFiles = Lists.newArrayList(writer.dataFiles());
-    List<DataFile> currentDataFiles = task.files().stream().map(FileScanTask::file) .collect(Collectors.toList());
+    List<DataFile> currentDataFiles = task.files().stream().map(FileScanTask::file).collect(Collectors.toList());
 
     return RewriteResult.builder(snapshotId, table.spec().partitionType())
         .partition(partition)
