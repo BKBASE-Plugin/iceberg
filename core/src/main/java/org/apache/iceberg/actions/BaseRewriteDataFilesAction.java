@@ -246,7 +246,7 @@ public abstract class BaseRewriteDataFilesAction<ThisT>
           return TableScanUtil.planTasks(splitTasks, targetSizeInBytes, splitLookback, splitOpenFileCost);
         })
         .flatMap(Streams::stream)
-        .filter(task -> task.files().size() > 1 || isPartialFileScan(task))
+        .filter(task -> task.files().size() > (hasDeleteFiles ? 0 : 1) || isPartialFileScan(task))
         .collect(Collectors.toList());
 
     if (combinedScanTasks.isEmpty()) {
